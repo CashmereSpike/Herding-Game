@@ -182,6 +182,9 @@
       <label for="fearDist">羊の犬回避距離</label>
       <input type="range" id="fearDist" min="80" max="220" value="155" />
 
+      <label for="seedInput">シード値</label>
+      <input type="text" id="seedInput" value="" inputmode="numeric" />
+
       <button id="closeSettings">閉じる</button>
     </div>
 
@@ -192,8 +195,8 @@
     </div>
 
     <div id="hud">
-      <span id="stageLabel">Stage: 1</span>
-      <span id="sheepCountLabel">Sheep: 1</span>
+      <span id="stageLabel">ステージ: 1</span>
+      <span id="sheepCountLabel">羊: 1</span>
       <span id="messageLabel"></span>
       <button id="settingsToggle" class="hud-btn">設定</button>
     </div>
@@ -214,11 +217,24 @@
     const dogSpeedSlider = document.getElementById('dogSpeed');
     const maxStageSlider = document.getElementById('maxStage');
     const fearDistSlider = document.getElementById('fearDist');
+    const seedInput = document.getElementById('seedInput');
 
     const overlay = document.getElementById('overlay');
     const overlayText = document.getElementById('overlayText');
     const overlaySub = document.getElementById('overlaySub');
     const overlayButton = document.getElementById('overlayButton');
+    let lastFocusedElement = null;
+
+    settingsPanel.setAttribute('aria-hidden', 'true');
+    settingsPanel.setAttribute('role', 'dialog');
+    settingsPanel.setAttribute('aria-label', '設定パネル');
+    settingsPanel.setAttribute('tabindex', '-1');
+    settingsToggle.setAttribute('aria-label', '設定を開く');
+    closeSettings.setAttribute('aria-label', '設定を閉じる');
+    overlay.setAttribute('aria-hidden', 'false');
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-label', 'ゲーム開始オーバーレイ');
+    overlayButton.setAttribute('aria-label', 'ゲームを開始する');
 
     const params = {
       sheepMinSpeed: 26,
@@ -245,6 +261,10 @@
       goalStayTime: 0.55,
       maxStage: 5
     };
+
+    const settingsStorageKey = 'herdingGameSettingsV1';
+    let rngState = 0x12345678;
+    let currentSeed = 12345;
 
     let cw = 0;
     let ch = 0;
@@ -279,11 +299,56 @@
     }
 
     function rand(min, max) {
-      return Math.random() * (max - min) + min;
+      return seededRandom() * (max - min) + min;
     }
 
     function dist(x1, y1, x2, y2) {
       return Math.hypot(x2 - x1, y2 - y1);
+    }
+
+    function sanitizeSeed(raw) {
+      const num = Number(raw);
+      if (!Number.isFinite(num)) return null;
+      return Math.floor(Math.abs(num)) >>> 0;
+    }
+
+    function setSeed(seed) {
+      const safe = (seed >>> 0) || 1;
+      currentSeed = safe;
+      rngState = safe;
+      seedInput.value = String(safe);
+    }
+
+    function seededRandom() {
+      rngState += 0x6D2B79F5;
+      let t = rngState;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+
+    function saveSettings() {
+      const data = {
+        dogSpeed: clamp(parseFloat(dogSpeedSlider.value), 80, 320),
+        maxStage: clamp(parseInt(maxStageSlider.value, 10), 1, 7),
+        fearDist: clamp(parseFloat(fearDistSlider.value), 80, 220),
+        seed: currentSeed
+      };
+      localStorage.setItem(settingsStorageKey, JSON.stringify(data));
+    }
+
+    function loadSettings() {
+      const raw = localStorage.getItem(settingsStorageKey);
+      if (!raw) return;
+      try {
+        const data = JSON.parse(raw);
+        if (Number.isFinite(data.dogSpeed)) dogSpeedSlider.value = String(clamp(data.dogSpeed, 80, 320));
+        if (Number.isFinite(data.maxStage)) maxStageSlider.value = String(clamp(data.maxStage, 1, 7));
+        if (Number.isFinite(data.fearDist)) fearDistSlider.value = String(clamp(data.fearDist, 80, 220));
+        if (Number.isFinite(data.seed)) setSeed(data.seed >>> 0);
+      } catch (err) {
+        console.warn('設定の読み込みに失敗しました', err);
+      }
     }
 
     class Sheep {
@@ -293,7 +358,7 @@
         this.r = 7.2;
         this.vx = vx ?? rand(-1, 1) * params.sheepMaxSpeed;
         this.vy = vy ?? rand(-1, 1) * params.sheepMaxSpeed;
-        this.wobble = Math.random() * Math.PI * 2;
+        this.wobble = seededRandom() * Math.PI * 2;
       }
 
       update(dt, sheepList, dog, goal) {
@@ -441,7 +506,7 @@
         this.vy = 0;
         this.targetX = x;
         this.targetY = y;
-        this.sidePhase = Math.random() * Math.PI * 2;
+        this.sidePhase = seededRandom() * Math.PI * 2;
         this.state = 'collect';
       }
 
@@ -607,8 +672,8 @@
     };
 
     function updateHUD() {
-      stageLabel.textContent = `Stage: ${game.stage}`;
-      sheepCountLabel.textContent = `Sheep: ${game.sheep.length}`;
+      stageLabel.textContent = `ステージ: ${game.stage}`;
+      sheepCountLabel.textContent = `羊: ${game.sheep.length}`;
     }
 
     function showMessage(text, duration = 1.6) {
@@ -621,8 +686,11 @@
       overlaySub.textContent = sub || '';
       overlayButton.textContent = buttonText;
       overlay.classList.remove('hidden');
+      overlay.setAttribute('aria-hidden', 'false');
+      overlayButton.focus();
       overlayButton.onclick = () => {
         overlay.classList.add('hidden');
+        overlay.setAttribute('aria-hidden', 'true');
         onClick?.();
       };
     }
@@ -641,6 +709,13 @@
       params.dogSpeed = parseFloat(dogSpeedSlider.value);
       params.maxStage = parseInt(maxStageSlider.value, 10);
       params.fearDist = parseFloat(fearDistSlider.value);
+      const selectedSeed = sanitizeSeed(seedInput.value);
+      if (selectedSeed !== null) {
+        setSeed(selectedSeed);
+      } else {
+        setSeed((Date.now() & 0xffffffff) >>> 0);
+      }
+      saveSettings();
 
       game.stage = 1;
       game.state = 'play';
@@ -663,7 +738,7 @@
 
     function spawnParticles(x, y, count, color = 'rgba(0,255,200,0.8)') {
       for (let i = 0; i < count; i++) {
-        const a = Math.random() * Math.PI * 2;
+        const a = seededRandom() * Math.PI * 2;
         const speed = rand(40, 180);
         game.particles.push({
           x, y,
@@ -688,7 +763,7 @@
 
         let speedLen = Math.hypot(s.vx, s.vy);
         if (speedLen < 1) {
-          const angle = Math.random() * Math.PI * 2;
+          const angle = seededRandom() * Math.PI * 2;
           speedLen = (params.sheepMinSpeed + params.sheepMaxSpeed) * 0.5;
 
           left.vx = Math.cos(angle) * speedLen;
@@ -729,7 +804,7 @@
       game.dog.vx = 0;
       game.dog.vy = 0;
       game.dog.state = 'collect';
-      game.dog.sidePhase = Math.random() * Math.PI * 2;
+      game.dog.sidePhase = seededRandom() * Math.PI * 2;
 
       updateHUD();
       showMessage(`分裂 → ステージ${game.stage}`);
@@ -855,26 +930,77 @@
 
     settingsToggle.addEventListener('click', () => {
       settingsPanel.classList.toggle('open');
+      const opened = settingsPanel.classList.contains('open');
+      settingsPanel.setAttribute('aria-hidden', opened ? 'false' : 'true');
+      if (opened) {
+        lastFocusedElement = document.activeElement;
+        seedInput.focus();
+      } else {
+        (lastFocusedElement || settingsToggle).focus();
+      }
     });
 
     closeSettings.addEventListener('click', () => {
       settingsPanel.classList.remove('open');
+      settingsPanel.setAttribute('aria-hidden', 'true');
+      (lastFocusedElement || settingsToggle).focus();
     });
 
     dogSpeedSlider.addEventListener('input', () => {
       params.dogSpeed = parseFloat(dogSpeedSlider.value);
+      saveSettings();
     });
 
     maxStageSlider.addEventListener('input', () => {
       params.maxStage = parseInt(maxStageSlider.value, 10);
+      saveSettings();
     });
 
     fearDistSlider.addEventListener('input', () => {
       params.fearDist = parseFloat(fearDistSlider.value);
+      saveSettings();
+    });
+
+    seedInput.addEventListener('change', () => {
+      const next = sanitizeSeed(seedInput.value);
+      if (next !== null) {
+        setSeed(next);
+        saveSettings();
+      } else {
+        seedInput.value = String(currentSeed);
+      }
+    });
+
+    window.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') {
+        if (settingsPanel.classList.contains('open')) {
+          settingsPanel.classList.remove('open');
+          settingsPanel.setAttribute('aria-hidden', 'true');
+          (lastFocusedElement || settingsToggle).focus();
+          ev.preventDefault();
+          return;
+        }
+        if (!overlay.classList.contains('hidden')) {
+          overlay.classList.add('hidden');
+          overlay.setAttribute('aria-hidden', 'true');
+          ev.preventDefault();
+        }
+      }
+      if (ev.key === 'Enter' && !overlay.classList.contains('hidden')) {
+        overlayButton.click();
+      }
     });
 
     window.addEventListener('DOMContentLoaded', () => {
       resize();
+      loadSettings();
+      const querySeed = new URLSearchParams(window.location.search).get('seed');
+      const parsedSeed = sanitizeSeed(querySeed);
+      if (parsedSeed !== null) setSeed(parsedSeed);
+      if (!seedInput.value) setSeed((Date.now() & 0xffffffff) >>> 0);
+      params.dogSpeed = parseFloat(dogSpeedSlider.value);
+      params.maxStage = parseInt(maxStageSlider.value, 10);
+      params.fearDist = parseFloat(fearDistSlider.value);
       requestAnimationFrame(loop);
 
       showOverlay(
